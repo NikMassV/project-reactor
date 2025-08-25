@@ -4,7 +4,9 @@ import org.junit.jupiter.api.Test;
 import reactor.core.publisher.Flux;
 import reactor.core.publisher.Mono;
 import reactor.core.scheduler.Schedulers;
+import reactor.util.context.Context;
 
+import java.time.Duration;
 import java.util.Arrays;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ThreadLocalRandom;
@@ -212,6 +214,74 @@ public class StreamTest {
                 .subscribe(result -> System.out.println("IN thread [" + Thread.currentThread().getName() + "] -> " + result));
 
         cdl.await();
+    }
+
+    @Test
+    public void hotStream() throws InterruptedException {
+        var cdl = new CountDownLatch(1);
+        Flux<Object> stream = Flux.create(fluxSink -> {
+                    while (true) {
+                        fluxSink.next(System.currentTimeMillis());
+                    }
+                })
+                .sample(Duration.ofMillis(500))
+                .doFinally(ignore -> cdl.countDown())
+                .subscribeOn(Schedulers.single())
+                .share();
+        stream.subscribe(o -> System.out.println("[" + Thread.currentThread().getName() + "] Subscriber 1 -> " + o));
+        Thread.sleep(4000);
+        stream.subscribe(o -> System.out.println("[" + Thread.currentThread().getName() + "] Subscriber 2 -> " + o));
+        cdl.await();
+    }
+
+    @Test
+    public void reactorContext_viaSubscribe() {
+        String ctxKey = "key";
+        Flux.fromArray(generateIntArray(10))
+                .flatMap(i -> Mono.deferContextual(ctx -> {
+                            int value = ctx.<Integer>getOrEmpty(ctxKey).orElseThrow(() -> new IllegalArgumentException("Ctx key not found!"));
+                            String result = i % value == 0
+                                    ? String.format("Thread [%s] -> %d divisor of the number %d", Thread.currentThread().getName(), value, i)
+                                    : String.format("Thread [%s] -> %d NOT divisor of the number %d", Thread.currentThread().getName(), value, i);
+
+                            return Mono.just(result);
+                        })
+                ).subscribe(System.out::println,
+                        null,
+                        null,
+                        Context.of(ctxKey, ThreadLocalRandom.current().nextInt(2, 10)));
+    }
+
+    @Test
+    public void reactorContext_viaContextWriteLambda() {
+        String ctxKey = "key";
+        Flux.fromArray(generateIntArray(10))
+                .flatMap(i -> Mono.deferContextual(ctx -> {
+                            int value = ctx.<Integer>getOrEmpty(ctxKey).orElseThrow(() -> new IllegalArgumentException("Ctx key not found!"));
+                            String result = i % value == 0
+                                    ? String.format("Thread [%s] -> %d divisor of the number %d", Thread.currentThread().getName(), value, i)
+                                    : String.format("Thread [%s] -> %d NOT divisor of the number %d", Thread.currentThread().getName(), value, i);
+
+                            return Mono.just(result);
+                        })
+                ).contextWrite(ctx -> ctx.put(ctxKey, ThreadLocalRandom.current().nextInt(2, 10)))
+                .subscribe(System.out::println);
+    }
+
+    @Test
+    public void reactorContext_viaContextWriteWithContext() {
+        String ctxKey = "key";
+        Flux.fromArray(generateIntArray(10))
+                .flatMap(i -> Mono.deferContextual(ctx -> {
+                            int value = ctx.<Integer>getOrEmpty(ctxKey).orElseThrow(() -> new IllegalArgumentException("Ctx key not found!"));
+                            String result = i % value == 0
+                                    ? String.format("Thread [%s] -> %d divisor of the number %d", Thread.currentThread().getName(), value, i)
+                                    : String.format("Thread [%s] -> %d NOT divisor of the number %d", Thread.currentThread().getName(), value, i);
+
+                            return Mono.just(result);
+                        })
+                ).contextWrite(Context.of(ctxKey, ThreadLocalRandom.current().nextInt(2, 10)))
+                .subscribe(System.out::println);
     }
 
     private Integer[] generateIntArray(int size) {
