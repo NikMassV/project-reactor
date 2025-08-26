@@ -284,6 +284,53 @@ public class StreamTest {
                 .subscribe(System.out::println);
     }
 
+    @Test
+    public void reactorContext_contextWriteBeforeDefer_wrongInit() {
+        String ctxKey = "key";
+
+        Flux.fromArray(generateIntArray(10))
+                .contextWrite(ctx -> ctx.put(ctxKey, 4))
+                .flatMap(i -> Mono.deferContextual(ctx -> {
+                            int value = ctx.<Integer>getOrEmpty(ctxKey).orElseThrow(() -> new IllegalArgumentException("Ctx key not found!"));
+                            String result = i % value == 0
+                                    ? String.format("Thread [%s] -> %d divisor of the number %d", Thread.currentThread().getName(), value, i)
+                                    : String.format("Thread [%s] -> %d NOT divisor of the number %d", Thread.currentThread().getName(), value, i);
+
+                            return Mono.just(result);
+                        })
+                ).subscribe(System.out::println);
+    }
+
+    @Test
+    public void reactorContext_contextWriteInsideFlatMap() {
+        String ctxKey = "key";
+
+        Flux.fromArray(generateIntArray(10))
+                .flatMap(i -> Mono.deferContextual(ctx -> {
+                            int value = ctx.<Integer>getOrEmpty(ctxKey).orElseThrow(() -> new IllegalArgumentException("Ctx key not found!"));
+                            String result = i % value == 0
+                                    ? String.format("Thread [%s] -> %d divisor of the number %d", Thread.currentThread().getName(), value, i)
+                                    : String.format("Thread [%s] -> %d NOT divisor of the number %d", Thread.currentThread().getName(), value, i);
+
+                            return Mono.just(result);
+                        }).contextWrite(ctx -> ctx.put(ctxKey, ThreadLocalRandom.current().nextInt(2, 10)))
+                ).subscribe(System.out::println);
+    }
+
+    @Test
+    public void reactorContext_nestedContextWrite_wrongInit() {
+        String ctxKey = "key";
+
+        Flux.fromArray(generateIntArray(10))
+                .flatMap(i -> Mono.<Integer>deferContextual(ctx -> {
+                    int v = ctx.<Integer>getOrEmpty(ctxKey).orElseThrow(() -> new IllegalArgumentException("Ctx key not found!"));
+                    return Mono.just(i);
+                }))
+                .flatMap(i -> Mono.deferContextual(ctx -> Mono.just(i))
+                        .contextWrite(ctx -> ctx.put(ctxKey, ThreadLocalRandom.current().nextInt(2, 10))))
+                .subscribe(System.out::println);
+    }
+
     private Integer[] generateIntArray(int size) {
         Integer[] array = new Integer[size];
         for (int i = 0; i < size; i++) {
